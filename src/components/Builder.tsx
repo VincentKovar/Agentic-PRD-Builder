@@ -9,11 +9,15 @@ import { STAGES, derive, extract, stripTags, type Msg } from "@/lib/parse";
 import type { ChecklistRow } from "@/lib/checklist";
 import { SAMPLE_MESSAGES } from "@/lib/sample";
 
-type Run = { id: string; title: string; messages: Msg[]; updatedAt: number; research?: boolean };
+type Run = { id: string; title: string; messages: Msg[]; updatedAt: number; research?: boolean; sources?: Sources };
 type Tab = "prd" | "checks" | "set";
 type Pane = "chat" | "work";
 type View = Tab | "chat";
-type Features = { anthropic: boolean; research: boolean };
+type Sources = { web: boolean; academic: boolean };
+type Features = { anthropic: boolean; research: boolean; academic: boolean; openalexKey?: boolean; semanticScholarKey?: boolean };
+const NO_SOURCES: Sources = { web: false, academic: false };
+const anySource = (s: Sources) => s.web || s.academic;
+const defaultSources = (f: Features | null): Sources => ({ web: f?.research ?? false, academic: f?.academic ?? false });
 
 const STORE = "prd-builder-runs";
 const PHASES = STAGES.filter((s) => s.phase > 0).length;
@@ -134,7 +138,7 @@ export default function Builder() {
   const [showRuns, setShowRuns] = useState(false);
   const [copied, setCopied] = useState(false);
   const [features, setFeatures] = useState<Features | null>(null);
-  const [research, setResearch] = useState(false);
+  const [sources, setSources] = useState<Sources>(NO_SOURCES);
   const [sample, setSample] = useState(false);
   const [rowInfo, setRowInfo] = useState<Record<string, ChecklistRow>>({});
   const abortRef = useRef<AbortController | null>(null);
@@ -149,9 +153,9 @@ export default function Builder() {
       .then((r) => r.json())
       .then((f: Features) => {
         setFeatures(f);
-        setResearch(f.research);
+        setSources(defaultSources(f));
       })
-      .catch(() => setFeatures({ anthropic: false, research: false }));
+      .catch(() => setFeatures({ anthropic: false, research: false, academic: false }));
     fetch("/api/checklist")
       .then((r) => r.json())
       .then((j: { rows: ChecklistRow[] }) => setRowInfo(Object.fromEntries(j.rows.map((r) => [r.id, r]))))
@@ -188,10 +192,10 @@ export default function Builder() {
     }
   };
 
-  const persist = useCallback((id: string, msgs: Msg[], withResearch: boolean) => {
+  const persist = useCallback((id: string, msgs: Msg[], withSources: Sources) => {
     setRuns((prev) => {
       const next = [
-        { id, title: titleOf(msgs), messages: msgs, updatedAt: Date.now(), research: withResearch },
+        { id, title: titleOf(msgs), messages: msgs, updatedAt: Date.now(), sources: withSources },
         ...prev.filter((r) => r.id !== id),
       ];
       saveRuns(next);
@@ -219,7 +223,7 @@ export default function Builder() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, research }),
+          body: JSON.stringify({ messages: history, research: sources }),
           signal: ctl.signal,
         });
         if (!res.ok || !res.body) {
@@ -241,17 +245,18 @@ export default function Builder() {
         abortRef.current = null;
         const final: Msg[] = acc ? [...history, { role: "assistant", content: acc }] : history;
         setMessages(final);
-        persist(id, final, research);
+        persist(id, final, sources);
       }
     },
-    [messages, streaming, sample, runId, research, persist],
+    [messages, streaming, sample, runId, sources, persist],
   );
 
   const openRun = (r: Run) => {
     setSample(false);
     setRunId(r.id);
     setMessages(r.messages);
-    if (r.research !== undefined) setResearch(r.research && (features?.research ?? false));
+    const saved = r.sources ?? { web: r.research === true, academic: false };
+    setSources({ web: saved.web && (features?.research ?? false), academic: saved.academic && (features?.academic ?? false) });
     setShowRuns(false);
     setNetError(null);
     setPane("chat");
@@ -266,14 +271,14 @@ export default function Builder() {
     setShowRuns(false);
     setNetError(null);
     setPane("chat");
-    setResearch(features?.research ?? false);
+    setSources(defaultSources(features));
   };
 
   const openSample = () => {
     setSample(true);
     setRunId(null);
     setMessages(SAMPLE_MESSAGES);
-    setResearch(false);
+    setSources(NO_SOURCES);
     setNetError(null);
     setInput("");
     setShowRuns(false);
@@ -509,12 +514,12 @@ export default function Builder() {
           value={input}
           onChange={setInput}
           features={features}
-          research={research}
-          onResearch={setResearch}
+          sources={sources}
+          onSources={setSources}
           onSample={openSample}
           onStart={() =>
             send(
-              `${input.trim()}\n\n(Research: ${research ? "on" : "off. I'll paste any evidence myself; mark the rest SET."})`,
+              `${input.trim()}\n\n(Research: ${anySource(sources) ? [sources.web && "web", sources.academic && "academic"].filter(Boolean).join(" and ") + " on" : "off. I'll paste any evidence myself; mark the rest SET."})`,
               [],
             )
           }
@@ -623,7 +628,7 @@ export default function Builder() {
                 )}
               </form>
               <p className="mt-1.5 text-xs text-ink-soft">
-                Enter to send · Shift+Enter for a new line{research ? " · Research on" : ""}
+                Enter to send · Shift+Enter for a new line{anySource(sources) ? " · Research on" : ""}
               </p>
                 </>
               )}
@@ -852,18 +857,19 @@ function Start({
   onStart,
   onSample,
   features,
-  research,
-  onResearch,
+  sources,
+  onSources,
 }: {
   value: string;
   onChange: (v: string) => void;
   onStart: () => void;
   onSample: () => void;
   features: Features | null;
-  research: boolean;
-  onResearch: (v: boolean) => void;
+  sources: Sources;
+  onSources: (v: Sources) => void;
 }) {
-  const canResearch = features?.research ?? false;
+  const canWeb = features?.research ?? false;
+  const canAcademic = features?.academic ?? false;
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col overflow-y-auto px-4 py-10 sm:px-6 [&>*]:shrink-0">
       <h2 className="mt-auto font-serif text-3xl leading-tight font-semibold sm:text-4xl">
@@ -926,32 +932,52 @@ function Start({
         </button>
       )}
 
-      <label className={`mt-4 flex items-start gap-3 text-sm ${canResearch ? "" : "opacity-80"}`}>
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-          checked={research && canResearch}
-          disabled={!canResearch}
-          onChange={(e) => onResearch(e.target.checked)}
-        />
-        <span>
-          <span className="font-semibold">Web research</span>
-          <span className="block text-ink-soft">
-            {canResearch
-              ? "Finds and reads sources for why-now, evidence and competitors, and cites them with dates."
-              : features
-                ? (
-                    <>
-                      Not set up. Without it you paste evidence yourself, and gaps are marked for you to fill.{" "}
-                      <Link href="/setup" className="text-accent underline">
-                        How to add a key
-                      </Link>
-                    </>
-                  )
-                : "Checking…"}
+      <fieldset className="mt-4 space-y-3">
+        <legend className="sr-only">Research sources</legend>
+        <label className={`flex items-start gap-3 text-sm ${canWeb ? "" : "opacity-80"}`}>
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+            checked={sources.web && canWeb}
+            disabled={!canWeb}
+            onChange={(e) => onSources({ ...sources, web: e.target.checked })}
+          />
+          <span>
+            <span className="font-semibold">Web research</span>
+            <span className="block text-ink-soft">
+              {canWeb ? (
+                "Searches the web and reads pages for why-now, competitors and facts, and cites them with dates."
+              ) : features ? (
+                <>
+                  Needs a Tavily key. Without it you paste evidence yourself.{" "}
+                  <Link href="/setup" className="text-accent underline">
+                    How to add a key
+                  </Link>
+                </>
+              ) : (
+                "Checking…"
+              )}
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+        <label className={`flex items-start gap-3 text-sm ${canAcademic ? "" : "opacity-80"}`}>
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+            checked={sources.academic && canAcademic}
+            disabled={!canAcademic}
+            onChange={(e) => onSources({ ...sources, academic: e.target.checked })}
+          />
+          <span>
+            <span className="font-semibold">Academic research</span>
+            <span className="block text-ink-soft">
+              {features
+                ? "Finds scholarly papers (OpenAlex, and Semantic Scholar with a key) and explains what each finding means for your PRD and how strong the evidence is. Works without a key, within a small shared daily limit."
+                : "Checking…"}
+            </span>
+          </span>
+        </label>
+      </fieldset>
 
       <div className="mt-6 mb-auto flex flex-wrap items-center gap-3">
         <button

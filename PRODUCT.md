@@ -33,7 +33,7 @@ Unlike chatting with the skill in Claude, the app shows the PRD draft and the ch
 ## Capabilities and Constraints
 
 - Live PRD preview, checklist pass/partial/missing table, SET list, phase stepper, saved runs, Finish summary.
-- Optional web research through Tavily (search and page extract) with caps; without a key the user pastes evidence and gaps are marked SET.
+- Optional research: web (Tavily search and page extract) and academic (OpenAlex semantic and keyword search, Semantic Scholar keyword search), all capped. Findings are shown with a plain-language interpretation (what it says, what it means for this PRD, how strong the evidence is), always labelled as the model's interpretation. Without a key the user pastes evidence and gaps are marked SET.
 - Never invent facts, numbers, quotes or competitors; unknowns are tagged SET and starting numbers are labelled proposed.
 - Undecided: a no-key sample run for visitors; writing approved rows back to `data/checklist.md`; hosted multi-user mode; making the repository public.
 

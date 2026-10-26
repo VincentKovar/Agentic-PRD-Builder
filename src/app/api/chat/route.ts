@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { ACADEMIC_PER_RUN, ACADEMIC_TOOLS, academicSearch } from "@/lib/academic";
 import { buildSystem } from "@/lib/prompt";
 import {
   EXTRACTS_PER_RUN,
@@ -15,7 +16,8 @@ const MAX_CHARS = 200_000;
 const MAX_TURNS = 20; // model turns per request, a backstop on the tool loop
 
 type Msg = { role: "user" | "assistant"; content: string };
-type Body = { messages: Msg[]; research?: boolean };
+type Sources = { web: boolean; academic: boolean };
+type Body = { messages: Msg[]; research?: boolean | Partial<Sources> };
 
 function validBody(body: unknown): body is Body {
   if (!body || typeof body !== "object" || !("messages" in body)) return false;
@@ -52,15 +54,19 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const research = body.research === true;
-  if (research && !researchConfigured()) {
+  // A plain `true` from older saved runs means web research only.
+  const r = body.research;
+  const sources: Sources =
+    typeof r === "object" && r !== null ? { web: r.web === true, academic: r.academic === true } : { web: r === true, academic: false };
+  if (sources.web && !researchConfigured()) {
     return Response.json(
-      { error: "Research is on but TAVILY_API_KEY is not set. Add it to .env.local, restart, or turn research off." },
+      { error: "Web research is on but TAVILY_API_KEY is not set. Add it to .env.local, restart, or turn web research off." },
       { status: 500 },
     );
   }
+  const tools = [...(sources.web ? RESEARCH_TOOLS : []), ...(sources.academic ? ACADEMIC_TOOLS : [])];
 
-  const { stable, checklist } = await buildSystem(research);
+  const { stable, checklist } = await buildSystem(sources);
   const client = new Anthropic();
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: stable, cache_control: { type: "ephemeral" } },
@@ -85,6 +91,7 @@ export async function POST(req: Request) {
       const status = (s: string) => send(`<status>${s.replace(/[<>]/g, "")}</status>`);
       let searches = 0;
       let extracts = 0;
+      let papers = 0;
 
       try {
         const messages = [...history];
@@ -95,7 +102,7 @@ export async function POST(req: Request) {
               max_tokens: 16000,
               system,
               messages,
-              ...(research ? { tools: RESEARCH_TOOLS } : {}),
+              ...(tools.length ? { tools } : {}),
             },
             { signal: req.signal },
           );
@@ -128,6 +135,16 @@ export async function POST(req: Request) {
                 }
                 status(`Reading: ${host}`);
                 results.push({ type: "tool_result", tool_use_id: u.id, content: await webExtract(input) });
+              } else if (u.name === "academic_search") {
+                if (papers >= ACADEMIC_PER_RUN) throw new Error(`Paper-search cap reached (${ACADEMIC_PER_RUN}). Stop searching and say what the evidence you have does and does not show.`);
+                papers++;
+                const mode = input.mode === "semantic" ? "semantic" : "keyword";
+                status(`Searching papers (${mode}): ${input.query ?? ""} (${papers}/${ACADEMIC_PER_RUN})`);
+                results.push({
+                  type: "tool_result",
+                  tool_use_id: u.id,
+                  content: await academicSearch({ query: input.query, mode: input.mode, year_from: Number(input.year_from) || undefined }),
+                });
               } else {
                 throw new Error(`Unknown tool ${u.name}`);
               }

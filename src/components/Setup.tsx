@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Status = { anthropic: boolean; research: boolean } | null;
+type Status = { anthropic: boolean; research: boolean; academic?: boolean; openalexKey?: boolean; semanticScholarKey?: boolean } | null;
 type Test = { state: "idle" | "running" | "done"; ok?: boolean; message?: string };
 
 function Code({ children }: { children: string }) {
@@ -41,6 +41,7 @@ function Provider({
   name,
   required,
   found,
+  labels = ["Key found", "Key not set"],
   testing,
   onTest,
   test,
@@ -49,6 +50,7 @@ function Provider({
   name: string;
   required: boolean;
   found: boolean | null;
+  labels?: [string, string];
   testing: string;
   onTest: () => void;
   test: Test;
@@ -62,12 +64,12 @@ function Provider({
         <span
           className={`label ml-auto ${found === null ? "text-ink-soft" : found ? "text-pass" : "text-partial"}`}
         >
-          {found === null ? "Checking…" : found ? "Key found" : "Key not set"}
+          {found === null ? "Checking…" : found ? labels[0] : labels[1]}
         </span>
       </div>
       <div className="mt-3 space-y-3 text-sm">{children}</div>
       <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-rule pt-3">
-        <button className="btn" onClick={onTest} disabled={test.state === "running" || found === false}>
+        <button className="btn" onClick={onTest} disabled={test.state === "running" || (required && found === false) || (name.startsWith("Tavily") && found === false)}>
           {test.state === "running" ? "Testing…" : "Test connection"}
         </button>
         <span className="text-xs text-ink-soft">{testing}</span>
@@ -83,7 +85,7 @@ function Provider({
 
 export default function Setup() {
   const [status, setStatus] = useState<Status>(null);
-  const [tests, setTests] = useState<Record<string, Test>>({ anthropic: { state: "idle" }, tavily: { state: "idle" } });
+  const [tests, setTests] = useState<Record<string, Test>>({ anthropic: { state: "idle" }, tavily: { state: "idle" }, openalex: { state: "idle" }, semanticscholar: { state: "idle" } });
 
   useEffect(() => {
     fetch("/api/config")
@@ -92,7 +94,7 @@ export default function Setup() {
       .catch(() => setStatus({ anthropic: false, research: false }));
   }, []);
 
-  const runTest = async (provider: "anthropic" | "tavily") => {
+  const runTest = async (provider: "anthropic" | "tavily" | "openalex" | "semanticscholar") => {
     setTests((t) => ({ ...t, [provider]: { state: "running" } }));
     try {
       const res = await fetch("/api/setup/test", {
@@ -122,7 +124,7 @@ export default function Setup() {
       <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
         <h2 className="font-serif text-3xl leading-tight font-semibold sm:text-4xl">Set up your API keys</h2>
         <p className="mt-3 max-w-prose text-ink-soft">
-          This app talks to two services using keys that you own. A key is a long secret string that works like a
+          This app talks to a few services using keys that you own. Only the Anthropic key is required. A key is a long secret string that works like a
           password and may be billed to you. Keys live on the computer that runs this app, never in your browser.
         </p>
 
@@ -180,6 +182,51 @@ export default function Setup() {
           </ol>
         </Provider>
 
+        <Provider
+          name="OpenAlex (academic papers)"
+          required={false}
+          found={status ? Boolean(status.openalexKey) : null}
+          labels={["Key found", "No key (works anyway)"]}
+          testing="Free."
+          onTest={() => runTest("openalex")}
+          test={tests.openalex}
+        >
+          <p className="text-ink-soft">
+            Finds scholarly papers by meaning (semantic search) or by keywords, with citation counts and abstracts. It
+            works without a key, but keyless requests share one small free daily budget with everyone on your network.
+          </p>
+          <ol className="list-decimal space-y-2 pl-5">
+            <li>
+              For your own daily budget, get a free key at{" "}
+              <Ext href="https://openalex.org/settings/api">openalex.org/settings/api</Ext>.
+            </li>
+            <li>Put it in the file described below as OPENALEX_API_KEY. This step is optional.</li>
+          </ol>
+        </Provider>
+
+        <Provider
+          name="Semantic Scholar (academic papers)"
+          required={false}
+          found={status ? Boolean(status.semanticScholarKey) : null}
+          labels={["Key found", "No key (OpenAlex is used)"]}
+          testing="Free."
+          onTest={() => runTest("semanticscholar")}
+          test={tests.semanticscholar}
+        >
+          <p className="text-ink-soft">
+            Adds keyword paper search with citation counts and short auto-generated summaries. Its keyless pool is shared
+            and is often rate-limited, so without a key the app uses OpenAlex for keyword searches instead.
+          </p>
+          <ol className="list-decimal space-y-2 pl-5">
+            <li>
+              Request a free key with the{" "}
+              <Ext href="https://www.semanticscholar.org/product/api#api-key-form">API key form</Ext>. Approval can take
+              a little while.
+            </li>
+            <li>Put it in the file described below as SEMANTIC_SCHOLAR_API_KEY. This step is optional.</li>
+          </ol>
+        </Provider>
+
         <section className="mt-8" aria-label="Add the keys">
           <h2 className="font-serif text-xl font-semibold">Add them to the app</h2>
           <ol className="mt-3 list-decimal space-y-3 pl-5 text-sm">
@@ -190,7 +237,7 @@ export default function Setup() {
             <li>
               Open <code className="font-mono">.env.local</code> and paste each key after its equals sign, with no
               quotes and no spaces:
-              <Code>{`ANTHROPIC_API_KEY=sk-ant-…\nTAVILY_API_KEY=tvly-…`}</Code>
+              <Code>{`ANTHROPIC_API_KEY=sk-ant-…\nTAVILY_API_KEY=tvly-…\nOPENALEX_API_KEY=…\nSEMANTIC_SCHOLAR_API_KEY=…`}</Code>
             </li>
             <li>
               Restart the app so it picks them up: stop it with Ctrl+C, then
@@ -236,7 +283,7 @@ export default function Setup() {
             </li>
             <li>
               <span className="font-semibold">Know what leaves your machine.</span> Your messages and the PRD text go to
-              Anthropic. Short search queries go to Tavily. Don’t enter confidential material you wouldn’t send to those
+              Anthropic. Short search queries go to Tavily, OpenAlex and Semantic Scholar. Don’t enter confidential material you wouldn’t send to those
               services.
             </li>
             <li>

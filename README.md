@@ -21,6 +21,7 @@ API keys: open `/setup` in the running app for step-by-step instructions to get,
 - `src/app/api/chat/route.ts` – streams the model's reply.
 - `src/lib/tavily.ts` – Tavily search/extract tools. The route runs the model's tool-use loop (caps: 8 searches, 6 page opens per request).
 - `src/lib/sample.ts` – the read-only sample run shown when no API key is set (fictional, adapted from the skill's example PRD).
+- `src/lib/academic.ts` – OpenAlex (semantic and keyword search, works without a key) and Semantic Scholar (keyword, key optional). The prompt asks the model to explain each finding: what it says, what it means for the PRD, and how strong the evidence is.
 - `src/lib/parse.ts` – reads `<stage>`, `<prd>`, `<checks>`, `<set>`, `<choices>` tags out of replies.
 - `src/components/Builder.tsx` – the UI. Runs are saved in browser localStorage.
 - `PRODUCT.md` – Impeccable product context. Design commands: `/impeccable critique`, `audit`, `polish`.
