@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { friendlyError } from "@/lib/errors";
 import { STAGES, derive, extract, stripTags, type Msg } from "@/lib/parse";
+import type { ChecklistRow } from "@/lib/checklist";
 
 type Run = { id: string; title: string; messages: Msg[]; updatedAt: number; research?: boolean };
 type Tab = "prd" | "checks" | "set";
@@ -11,6 +13,10 @@ type Pane = "chat" | "work";
 type Features = { anthropic: boolean; research: boolean };
 
 const STORE = "prd-builder-runs";
+const PHASES = STAGES.filter((s) => s.phase > 0).length;
+
+const SAMPLE_IDEA =
+  "An agent that reviews vendor contracts for a legal team and flags clauses that need a lawyer.";
 
 function loadRuns(): Run[] {
   try {
@@ -44,10 +50,12 @@ export default function Builder() {
   const [netError, setNetError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("prd");
   const [pane, setPane] = useState<Pane>("chat");
+  const [seenSig, setSeenSig] = useState("");
   const [showRuns, setShowRuns] = useState(false);
   const [copied, setCopied] = useState(false);
   const [features, setFeatures] = useState<Features | null>(null);
   const [research, setResearch] = useState(false);
+  const [rowInfo, setRowInfo] = useState<Record<string, ChecklistRow>>({});
   const abortRef = useRef<AbortController | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
@@ -63,6 +71,12 @@ export default function Builder() {
         setResearch(f.research);
       })
       .catch(() => setFeatures({ anthropic: false, research: false }));
+    fetch("/api/checklist")
+      .then((r) => r.json())
+      .then((j: { rows: ChecklistRow[] }) => setRowInfo(Object.fromEntries(j.rows.map((r) => [r.id, r]))))
+      .catch(() => {
+        /* rows fall back to bare IDs */
+      });
   }, []);
 
   const d = useMemo(() => derive(messages, streaming), [messages, streaming]);
@@ -74,6 +88,14 @@ export default function Builder() {
   useEffect(() => {
     if (!streaming && messages.length > 0) replyRef.current?.focus({ preventScroll: true });
   }, [streaming, messages.length]);
+
+  // A dot on the "PRD" toggle when the workspace changed while you were in the interview (below lg only).
+  const workSig = `${d.prd.length}|${d.checks.length}|${d.setItems.length}`;
+  const goPane = (p: Pane) => {
+    setSeenSig(workSig);
+    setPane(p);
+  };
+  const workChanged = pane === "chat" && workSig !== "0|0|0" && workSig !== seenSig;
 
   const persist = useCallback((id: string, msgs: Msg[], withResearch: boolean) => {
     setRuns((prev) => {
@@ -178,43 +200,66 @@ export default function Builder() {
     }
   };
 
+  /** Moves to the interview with a drafted reply so a gap can be fixed in one step. */
+  const draftReply = (text: string) => {
+    setInput(text);
+    goPane("chat");
+    setTimeout(() => replyRef.current?.focus(), 0);
+  };
+
+  const onTabKey = (e: React.KeyboardEvent, ids: Tab[]) => {
+    const i = ids.indexOf(tab);
+    const next =
+      e.key === "ArrowRight" ? ids[(i + 1) % ids.length] : e.key === "ArrowLeft" ? ids[(i - 1 + ids.length) % ids.length] : null;
+    if (!next) return;
+    e.preventDefault();
+    setTab(next);
+    document.getElementById(`tab-${next}`)?.focus();
+  };
+
   const stageIndex = STAGES.findIndex((s) => s.id === d.stage);
+  const stage = STAGES[stageIndex];
   const started = messages.length > 0;
   const counts = {
     pass: d.checks.filter((c) => c.result === "pass").length,
     partial: d.checks.filter((c) => c.result === "partial").length,
     missing: d.checks.filter((c) => c.result === "missing").length,
   };
+  const errorRaw = netError ?? d.error;
+  const tabIds: Tab[] = ["prd", "checks", "set"];
 
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex items-center gap-4 border-b border-rule px-4 py-3 sm:px-6">
-        <h1 className="font-serif text-xl font-semibold tracking-tight">PRD Builder</h1>
+        <h1 className="font-serif text-xl font-semibold tracking-tight whitespace-nowrap">PRD Builder</h1>
         {started && (
-          <ol className="hidden flex-1 items-center gap-1 md:flex" aria-label="Progress">
-            {STAGES.map((s, i) => (
-              <li
-                key={s.id}
-                aria-current={i === stageIndex ? "step" : undefined}
-                className={`flex items-center gap-1 text-xs ${
-                  i === stageIndex ? "font-semibold text-ink" : "text-ink-soft"
-                }`}
-              >
-                <span
-                  className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${
-                    i === stageIndex
-                      ? "border-accent bg-accent text-accent-ink"
-                      : i < stageIndex
-                        ? "border-ink-soft"
-                        : "border-rule"
+          <ol className="hidden flex-1 items-center gap-1 xl:flex" aria-label="Progress">
+            {STAGES.map((s, i) => {
+              const current = i === stageIndex;
+              const done = i < stageIndex;
+              return (
+                <li
+                  key={s.id}
+                  aria-current={current ? "step" : undefined}
+                  title={s.hint}
+                  className={`flex items-center gap-1.5 text-xs ${
+                    current ? "font-semibold text-ink" : s.phase > 0 ? "text-ink-soft" : "text-ink-soft/80"
                   }`}
                 >
-                  {i < stageIndex ? "✓" : i + 1}
-                </span>
-                {s.label}
-                {i < STAGES.length - 1 && <span className="mx-1 h-px w-4 bg-rule" aria-hidden />}
-              </li>
-            ))}
+                  <span
+                    aria-hidden
+                    className={`inline-flex items-center justify-center rounded-full border text-[10px] ${
+                      s.phase > 0 ? "h-5 w-5" : "h-3 w-3"
+                    } ${current ? "border-accent bg-accent text-accent-ink" : done ? "border-ink-soft bg-ink-soft text-paper" : "border-rule"}`}
+                  >
+                    {s.phase > 0 ? (done ? "✓" : s.phase) : ""}
+                  </span>
+                  {s.label}
+                  {done && <span className="sr-only"> (done)</span>}
+                  {i < STAGES.length - 1 && <span className="mx-1 h-px w-3 bg-rule" aria-hidden />}
+                </li>
+              );
+            })}
           </ol>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -242,7 +287,7 @@ export default function Builder() {
                   </button>
                   <span className="text-xs text-ink-soft">{new Date(r.updatedAt).toLocaleDateString()}</span>
                   <button
-                    className="min-h-9 px-1 text-xs text-ink-soft hover:text-missing"
+                    className="link-btn text-ink-soft hover:text-missing"
                     onClick={() => deleteRun(r)}
                     aria-label={`Delete ${r.title}`}
                   >
@@ -256,12 +301,16 @@ export default function Builder() {
       )}
 
       {started && (
-        <div className="flex items-center gap-3 border-b border-rule px-4 py-2 md:hidden">
-          <p className="text-xs text-ink-soft">
-            Step {stageIndex + 1} of {STAGES.length} ·{" "}
-            <span className="font-semibold text-ink">{STAGES[stageIndex].label}</span>
+        <div className="flex items-center gap-3 border-b border-rule px-4 py-2 sm:px-6">
+          <p className="min-w-0 flex-1 text-xs text-ink-soft">
+            <span className="font-semibold text-ink xl:hidden">
+              {stage.phase > 0 ? `Phase ${stage.phase} of ${PHASES} · ` : ""}
+              {stage.label}
+            </span>
+            <span className="xl:hidden"> — </span>
+            {stage.hint}
           </p>
-          <div className="ml-auto flex rounded border border-rule text-xs lg:hidden" role="group" aria-label="View">
+          <div className="flex rounded border border-rule text-xs lg:hidden" role="group" aria-label="View">
             {(
               [
                 ["chat", "Interview"],
@@ -271,10 +320,16 @@ export default function Builder() {
               <button
                 key={id}
                 aria-pressed={pane === id}
-                onClick={() => setPane(id)}
-                className={`px-3 py-1.5 ${pane === id ? "bg-ink text-paper" : "text-ink-soft"}`}
+                onClick={() => goPane(id)}
+                className={`relative min-h-11 px-4 py-1.5 ${pane === id ? "bg-ink text-paper" : "text-ink-soft"}`}
               >
                 {label}
+                {id === "work" && workChanged && (
+                  <>
+                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-accent" aria-hidden />
+                    <span className="sr-only"> (updated)</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -301,9 +356,13 @@ export default function Builder() {
             className={`${pane === "chat" ? "flex" : "hidden"} min-h-0 w-full flex-col lg:flex lg:border-r lg:border-rule`}
             aria-label="Interview"
           >
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6" aria-live="polite">
+            <p className="sr-only" role="status" aria-live="polite">
+              {streaming ? "Claude is writing a reply." : messages.length > 1 ? "Reply ready." : ""}
+            </p>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
               {messages.map((m, i) => {
-                const text = m.role === "assistant" ? stripTags(m.content) : m.content.replace(/\n\n\(Research:[\s\S]*\)$/, "");
+                const text =
+                  m.role === "assistant" ? stripTags(m.content) : m.content.replace(/\n\n\(Research:[\s\S]*\)$/, "");
                 const last = i === messages.length - 1;
                 if (!text && !(streaming && last)) return null;
                 return m.role === "user" ? (
@@ -317,20 +376,26 @@ export default function Builder() {
                   <div key={i} className="prose-chat">
                     {text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>}
                     {streaming && last && (
-                      <p className="flex items-center gap-2 text-xs text-ink-soft" role="status">
-                        <span className="dots" aria-hidden />
+                      <p className="flex items-center gap-2 text-xs text-ink-soft" aria-hidden>
+                        <span className="dots" />
                         {d.status ?? (text ? "Writing…" : "Thinking…")}
                       </p>
                     )}
                   </div>
                 );
               })}
-              {(netError || d.error) && (
-                <div role="alert" className="rounded border border-missing p-3 text-sm text-missing">
-                  {netError ?? d.error}
-                  <button className="ml-3 underline" onClick={retry}>
-                    Retry
-                  </button>
+              {errorRaw && (
+                <div role="alert" className="rounded border border-missing p-3 text-sm">
+                  <p className="text-missing">{friendlyError(errorRaw)}</p>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button className="btn" onClick={retry}>
+                      Retry
+                    </button>
+                    <details className="text-xs text-ink-soft">
+                      <summary className="cursor-pointer">Technical details</summary>
+                      <p className="mt-1 break-words">{errorRaw}</p>
+                    </details>
+                  </div>
                 </div>
               )}
               <div ref={chatEnd} />
@@ -379,7 +444,7 @@ export default function Builder() {
                   </button>
                 )}
               </form>
-              <p className="mt-1.5 text-[11px] text-ink-soft">
+              <p className="mt-1.5 text-xs text-ink-soft">
                 Enter to send · Shift+Enter for a new line{research ? " · Research on" : ""}
               </p>
             </div>
@@ -394,22 +459,26 @@ export default function Builder() {
                 [
                   ["prd", "PRD"],
                   ["checks", d.checks.length ? `Checklist ${counts.pass}/${d.checks.length}` : "Checklist"],
-                  ["set", `SET items${d.setItems.length ? ` (${d.setItems.length})` : ""}`],
+                  ["set", `Needs your input${d.setItems.length ? ` (${d.setItems.length})` : ""}`],
                 ] as [Tab, string][]
               ).map(([id, label]) => (
                 <button
                   key={id}
+                  id={`tab-${id}`}
                   role="tab"
                   aria-selected={tab === id}
+                  aria-controls="workspace-panel"
+                  tabIndex={tab === id ? 0 : -1}
+                  onKeyDown={(e) => onTabKey(e, tabIds)}
                   onClick={() => setTab(id)}
-                  className={`-mb-px border-b-2 px-3 py-2.5 text-sm ${
+                  className={`-mb-px min-h-11 border-b-2 px-3 text-sm ${
                     tab === id ? "border-accent font-semibold" : "border-transparent text-ink-soft hover:text-ink"
                   }`}
                 >
                   {label}
                 </button>
               ))}
-              {d.prd && (
+              {d.prd && tab === "prd" && (
                 <div className="ml-auto flex gap-2 py-1.5">
                   <button className="btn" onClick={copyPrd}>
                     {copied ? "Copied" : "Copy"}
@@ -421,7 +490,12 @@ export default function Builder() {
               )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8" role="tabpanel">
+            <div
+              id="workspace-panel"
+              className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8"
+              role="tabpanel"
+              aria-labelledby={`tab-${tab}`}
+            >
               {tab === "prd" &&
                 (d.prd ? (
                   <article className="prose-prd">
@@ -436,7 +510,11 @@ export default function Builder() {
               {tab === "checks" &&
                 (d.checks.length ? (
                   <div>
-                    <p className="mb-4 text-sm text-ink-soft">
+                    <p className="mb-1 max-w-prose text-sm text-ink-soft">
+                      The checklist is what a good PRD for an AI product must cover. Each row is scored once the draft
+                      is assembled.
+                    </p>
+                    <p className="mb-4 text-sm">
                       <span className="text-pass">{counts.pass} pass</span> ·{" "}
                       <span className="text-partial">{counts.partial} partial</span> ·{" "}
                       <span className="text-missing">{counts.missing} missing</span>
@@ -444,18 +522,40 @@ export default function Builder() {
                     <ul className="divide-y divide-rule border-y border-rule">
                       {[...d.checks]
                         .sort((a, b) => rank(a.result) - rank(b.result))
-                        .map((c) => (
-                          <li key={c.id} className="flex flex-wrap gap-x-3 gap-y-1 py-2.5 text-sm">
-                            <span className="w-10 shrink-0 font-mono text-xs text-ink-soft">{c.id}</span>
-                            <span
-                              className="w-16 shrink-0 text-xs font-semibold uppercase tracking-wide"
-                              style={{ color: `var(--${c.result})` }}
-                            >
-                              {c.result}
-                            </span>
-                            <span className="min-w-0 flex-1 basis-48 text-ink-soft">{c.note}</span>
-                          </li>
-                        ))}
+                        .map((c) => {
+                          const info = rowInfo[c.id];
+                          const title = info?.title ?? c.id;
+                          return (
+                            <li key={c.id} className="py-3 text-sm">
+                              <p className="flex flex-wrap items-baseline gap-x-2">
+                                <span className="font-mono text-xs text-ink-soft">{c.id}</span>
+                                <span className="font-medium">{title}</span>
+                                {info?.section && <span className="text-xs text-ink-soft">· {info.section}</span>}
+                              </p>
+                              <p className="mt-1 flex items-baseline gap-2">
+                                <span
+                                  className="w-16 shrink-0 text-xs font-semibold uppercase tracking-wide"
+                                  style={{ color: `var(--${c.result})` }}
+                                >
+                                  {c.result}
+                                </span>
+                                <span className="min-w-0 flex-1 text-ink-soft">{c.note}</span>
+                              </p>
+                              {c.result !== "pass" && (
+                                <button
+                                  className="link-btn mt-1 text-accent underline"
+                                  onClick={() =>
+                                    draftReply(
+                                      `Checklist ${c.id} (${title}) is ${c.result}${c.note ? `: ${c.note}` : ""}. Let's fix it.`,
+                                    )
+                                  }
+                                >
+                                  Fix in chat
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
                     </ul>
                   </div>
                 ) : (
@@ -468,23 +568,25 @@ export default function Builder() {
                 (d.setItems.length ? (
                   <div>
                     <p className="mb-4 max-w-prose text-sm text-ink-soft">
-                      Only you can confirm these or supply the evidence. Answer one in the chat and it drops off the
-                      list.
+                      Things only you can confirm or supply. They’re marked SET in the draft. Answer one in the chat and
+                      it drops off this list.
                     </p>
                     <ul className="grid gap-2">
                       {d.setItems.map((s) => (
                         <li
-                          key={s}
+                          key={s.item}
                           className="flex items-start gap-3 rounded border border-rule bg-surface px-3 py-2 text-sm"
                         >
-                          <span className="flex-1">{s.replace(/^SET:\s*/i, "")}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium">
+                              {s.item}
+                              {s.section && <span className="ml-2 text-xs font-normal text-ink-soft">· {s.section}</span>}
+                            </p>
+                            {s.why && <p className="mt-0.5 text-ink-soft">{s.why}</p>}
+                          </div>
                           <button
-                            className="min-h-6 shrink-0 text-xs text-accent underline"
-                            onClick={() => {
-                              setInput(`About "${s.replace(/^SET:\s*/i, "")}": `);
-                              setPane("chat");
-                              replyRef.current?.focus();
-                            }}
+                            className="link-btn shrink-0 text-accent underline"
+                            onClick={() => draftReply(`About "${s.item}": `)}
                           >
                             Answer
                           </button>
@@ -493,7 +595,9 @@ export default function Builder() {
                     </ul>
                   </div>
                 ) : (
-                  <Empty title="Nothing open">Items only you can confirm will be listed here as they come up.</Empty>
+                  <Empty title="Nothing needs your input">
+                    Items only you can confirm will be listed here as they come up.
+                  </Empty>
                 ))}
             </div>
           </section>
@@ -520,19 +624,40 @@ function Start({
 }) {
   const canResearch = features?.research ?? false;
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center overflow-y-auto px-4 py-10 sm:px-6">
-      <h2 className="font-serif text-3xl leading-tight font-semibold sm:text-4xl">
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col overflow-y-auto px-4 py-10 sm:px-6 [&>*]:shrink-0">
+      <h2 className="mt-auto font-serif text-3xl leading-tight font-semibold sm:text-4xl">
         Write a PRD that an AI agent can follow.
       </h2>
       <p className="mt-3 max-w-prose text-ink-soft">
-        Describe the product you want to build, or paste a PRD you already have. You’ll answer a few questions per
-        section, confirm each draft, and get a PRD checked against your living checklist.
+        A PRD (product requirements document) says what to build and why. Describe your product idea, or paste a PRD
+        you already have, and you’ll be walked through it one phase at a time.
       </p>
+
+      <ol className="mt-6 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2" aria-label="How it works">
+        {[
+          ["Describe", "Your idea, in a few lines."],
+          ["Answer", "A few questions per phase: Discover, Design, Develop, Deploy."],
+          ["Confirm", "Review each draft section and approve or edit it."],
+          ["Download", "A PRD checked against a checklist, with gaps clearly marked."],
+        ].map(([t, d], i) => (
+          <li key={t} className="flex gap-3">
+            <span
+              aria-hidden
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-ink-soft text-[10px]"
+            >
+              {i + 1}
+            </span>
+            <span>
+              <span className="font-semibold">{t}.</span> <span className="text-ink-soft">{d}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
 
       {features && !features.anthropic && (
         <p role="status" className="mt-6 rounded border border-partial p-3 text-sm">
-          <span className="font-semibold">No API key yet.</span> Add <code className="font-mono">ANTHROPIC_API_KEY</code>{" "}
-          to <code className="font-mono">.env.local</code> and restart the dev server to start an interview.
+          <span className="font-semibold">Not connected to Claude yet.</span> Whoever runs this app needs to add an API
+          key (see the README) before an interview can start.
         </p>
       )}
 
@@ -543,10 +668,15 @@ function Start({
         id="idea"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        rows={8}
-        placeholder="e.g. An agent that reviews vendor contracts for a legal team and flags clauses that need a lawyer."
-        className="field mt-2"
+        rows={7}
+        placeholder="What does it do, for whom, and where does AI come in?"
+        className="field mt-2 min-h-36"
       />
+      {!value.trim() && (
+        <button className="link-btn mt-1 self-start text-accent underline" onClick={() => onChange(SAMPLE_IDEA)}>
+          Try an example idea
+        </button>
+      )}
 
       <label className={`mt-4 flex items-start gap-3 text-sm ${canResearch ? "" : "opacity-80"}`}>
         <input
@@ -560,15 +690,15 @@ function Start({
           <span className="font-semibold">Web research</span>
           <span className="block text-ink-soft">
             {canResearch
-              ? "Searches and reads pages for why-now, problem evidence and competitors, with sources and dates. Your idea text is not sent to the search tool; only focused queries are."
+              ? "Finds and reads sources for why-now, evidence and competitors, and cites them with dates."
               : features
-                ? "Off. Add TAVILY_API_KEY to .env.local to enable it. Until then, paste evidence as you go and gaps are marked SET."
+                ? "Not set up. Without it you paste evidence yourself, and gaps are marked for you to fill."
                 : "Checking…"}
           </span>
         </span>
       </label>
 
-      <div className="mt-6">
+      <div className="mt-6 mb-auto">
         <button
           className="btn btn-primary whitespace-nowrap"
           disabled={value.trim().length < 10 || features?.anthropic === false}

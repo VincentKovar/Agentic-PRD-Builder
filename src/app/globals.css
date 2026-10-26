@@ -126,3 +126,9 @@ body {
 
 .dots { display: inline-block; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+.link-btn { min-height: 1.75rem; padding: 0 0.25rem; font-size: 0.8rem; cursor: pointer; }
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .link-btn { min-height: 44px; padding: 0 0.5rem; }
+}

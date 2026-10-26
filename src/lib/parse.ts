@@ -1,16 +1,18 @@
 export const STAGES = [
-  { id: "intake", label: "Intake" },
-  { id: "discover", label: "Discover" },
-  { id: "design", label: "Design" },
-  { id: "develop", label: "Develop" },
-  { id: "deploy", label: "Deploy" },
-  { id: "qa", label: "Check" },
-  { id: "deliver", label: "Deliver" },
+  { id: "intake", label: "Brief", phase: 0, hint: "Confirming your idea and the checklist" },
+  { id: "discover", label: "Discover", phase: 1, hint: "The problem, who has it, and why now" },
+  { id: "design", label: "Design", phase: 2, hint: "What the product does and how it earns trust" },
+  { id: "develop", label: "Develop", phase: 3, hint: "Requirements, tests and tool permissions" },
+  { id: "deploy", label: "Deploy", phase: 4, hint: "Rollout, cost limits and when it must stop" },
+  { id: "qa", label: "Check", phase: 0, hint: "Scoring the draft against the checklist" },
+  { id: "deliver", label: "Finish", phase: 0, hint: "Download the PRD and close the open gaps" },
 ] as const;
 
 export type StageId = (typeof STAGES)[number]["id"];
 
 export type Check = { id: string; result: "pass" | "partial" | "missing"; note?: string };
+
+export type SetItem = { item: string; why?: string; section?: string };
 
 export type Msg = { role: "user" | "assistant"; content: string };
 
@@ -51,6 +53,12 @@ function json<T>(raw: string | null, guard: (v: unknown) => v is T): T | null {
 
 const isStrings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
+/** SET items arrive as plain strings or as {item, why, section} objects. */
+const isSetItems = (v: unknown): v is (string | SetItem)[] =>
+  Array.isArray(v) &&
+  v.every((x) => typeof x === "string" || (x && typeof x === "object" && typeof (x as SetItem).item === "string"));
+const toSetItem = (x: string | SetItem): SetItem =>
+  typeof x === "string" ? { item: x.replace(/^SET:\s*/i, "") } : { ...x, item: x.item.replace(/^SET:\s*/i, "") };
 const isChecks = (v: unknown): v is Check[] =>
   Array.isArray(v) &&
   v.every(
@@ -64,7 +72,7 @@ export type Derived = {
   stage: StageId;
   prd: string;
   checks: Check[];
-  setItems: string[];
+  setItems: SetItem[];
   choices: string[];
   error: string | null;
   status: string | null;
@@ -86,7 +94,7 @@ export function derive(messages: Msg[], streaming: boolean): Derived {
     stage: STAGES.some((s) => s.id === stage) ? (stage as StageId) : "intake",
     prd: (newest((t) => extract(t, "prd", true)) as string | null)?.trim() ?? "",
     checks: (newest((t) => json(extract(t, "checks"), isChecks)) as Check[] | null) ?? [],
-    setItems: (newest((t) => json(extract(t, "set"), isStrings)) as string[] | null) ?? [],
+    setItems: ((newest((t) => json(extract(t, "set"), isSetItems)) as (string | SetItem)[] | null) ?? []).map(toSetItem),
     choices: streaming ? [] : (json(extract(lastText, "choices"), isStrings) ?? []),
     error: extract(lastText, "error"),
     status: streaming ? (extract(lastText, "status")?.trim() ?? null) : null,
