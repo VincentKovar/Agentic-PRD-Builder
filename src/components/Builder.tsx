@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/errors";
@@ -409,6 +410,9 @@ export default function Builder() {
           </ol>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <Link href="/setup" className="btn">
+            Setup
+          </Link>
           <button className="btn" onClick={() => setShowRuns((v) => !v)} aria-expanded={showRuns}>
             Runs{runs.length ? ` (${runs.length})` : ""}
           </button>
@@ -894,7 +898,11 @@ function Start({
       {features && !features.anthropic && (
         <p role="status" className="mt-6 rounded border border-partial p-3 text-sm">
           <span className="font-semibold">No API key on this copy of the app,</span> so a live interview can’t start.
-          You can still explore a finished sample run.{" "}
+          You can still explore a finished sample run, or{" "}
+          <Link href="/setup" className="text-accent underline">
+            set up your keys
+          </Link>
+          .{" "}
           <button className="link-btn text-accent underline" onClick={onSample}>
             Open the sample
           </button>
@@ -932,7 +940,14 @@ function Start({
             {canResearch
               ? "Finds and reads sources for why-now, evidence and competitors, and cites them with dates."
               : features
-                ? "Not set up. Without it you paste evidence yourself, and gaps are marked for you to fill."
+                ? (
+                    <>
+                      Not set up. Without it you paste evidence yourself, and gaps are marked for you to fill.{" "}
+                      <Link href="/setup" className="text-accent underline">
+                        How to add a key
+                      </Link>
+                    </>
+                  )
                 : "Checking…"}
           </span>
         </span>

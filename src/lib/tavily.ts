@@ -108,3 +108,8 @@ export async function webExtract(input: { url?: string; query?: string }) {
     ? `${text.slice(0, MAX_EXTRACT_CHARS)}\n\n[truncated at ${MAX_EXTRACT_CHARS} characters]`
     : text;
 }
+
+/** Spends 1 Tavily credit. Used only by the guarded Setup test. */
+export async function testTavily() {
+  await call("/search", { query: "connection test", search_depth: "basic", max_results: 1 });
+}

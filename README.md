@@ -10,10 +10,13 @@ npm install
 npm run dev                        # http://localhost:3000
 ```
 
+API keys: open `/setup` in the running app for step-by-step instructions to get, enter, test and safely handle your keys.
+
 ## Layout
 
 - `skill/` – copy of the skill (SKILL.md, config.md, references/). Re-copy to update.
 - `data/checklist.md` – the living checklist, re-read on every request. Edit by hand; never delete rows, retire them.
+- `src/components/Setup.tsx`, `src/app/api/setup/test/route.ts` – the key setup guide and guarded connection tests.
 - `src/lib/prompt.ts` – builds the system prompt and the web-app adapter (tag protocol).
 - `src/app/api/chat/route.ts` – streams the model's reply.
 - `src/lib/tavily.ts` – Tavily search/extract tools. The route runs the model's tool-use loop (caps: 8 searches, 6 page opens per request).
