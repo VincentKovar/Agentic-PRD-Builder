@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/errors";
@@ -10,6 +10,7 @@ import type { ChecklistRow } from "@/lib/checklist";
 type Run = { id: string; title: string; messages: Msg[]; updatedAt: number; research?: boolean };
 type Tab = "prd" | "checks" | "set";
 type Pane = "chat" | "work";
+type View = Tab | "chat";
 type Features = { anthropic: boolean; research: boolean };
 
 const STORE = "prd-builder-runs";
@@ -17,6 +18,62 @@ const PHASES = STAGES.filter((s) => s.phase > 0).length;
 
 const SAMPLE_IDEA =
   "An agent that reviews vendor contracts for a legal team and flags clauses that need a lawyer.";
+
+const subscribeLg = (cb: () => void) => {
+  const mq = window.matchMedia("(min-width: 1024px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+};
+const useIsLg = () =>
+  useSyncExternalStore(
+    subscribeLg,
+    () => window.matchMedia("(min-width: 1024px)").matches,
+    () => false,
+  );
+
+/** Marks SET and proposed labels as inline code so Md can render them as chips. */
+const markChips = (s: string) =>
+  s.replace(/\bSET:\s*/g, "`SET` ").replace(/\((?:proposed)\)|\*proposed\*|_proposed_/gi, "`proposed`");
+
+function SetChip() {
+  return (
+    <span className="chip chip-set" title="Needs your input: only you can confirm or supply this">
+      SET
+    </span>
+  );
+}
+
+function Md({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ children, className }) {
+          const t = String(children);
+          if (t === "SET") return <SetChip />;
+          if (t === "proposed")
+            return (
+              <span className="chip chip-proposed" title="A starting value you haven't confirmed yet">
+                proposed
+              </span>
+            );
+          return <code className={className}>{children}</code>;
+        },
+      }}
+    >
+      {markChips(text)}
+    </ReactMarkdown>
+  );
+}
+
+function Dot() {
+  return (
+    <>
+      <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-accent" aria-hidden />
+      <span className="sr-only"> (updated)</span>
+    </>
+  );
+}
 
 function loadRuns(): Run[] {
   try {
@@ -50,7 +107,8 @@ export default function Builder() {
   const [netError, setNetError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("prd");
   const [pane, setPane] = useState<Pane>("chat");
-  const [seenSig, setSeenSig] = useState("");
+  const [seen, setSeen] = useState<Record<Tab, string>>({ prd: "", checks: "", set: "" });
+  const isLg = useIsLg();
   const [showRuns, setShowRuns] = useState(false);
   const [copied, setCopied] = useState(false);
   const [features, setFeatures] = useState<Features | null>(null);
@@ -89,13 +147,23 @@ export default function Builder() {
     if (!streaming && messages.length > 0) replyRef.current?.focus({ preventScroll: true });
   }, [streaming, messages.length]);
 
-  // A dot on the "PRD" toggle when the workspace changed while you were in the interview (below lg only).
-  const workSig = `${d.prd.length}|${d.checks.length}|${d.setItems.length}`;
-  const goPane = (p: Pane) => {
-    setSeenSig(workSig);
-    setPane(p);
+  // One navigation model: a dot on a tab means it changed since you last looked at it.
+  const sigs: Record<Tab, string> = {
+    prd: d.prd ? String(d.prd.length) : "",
+    checks: d.checks.length ? `${d.checks.length}:${d.checks.map((c) => c.result[0]).join("")}` : "",
+    set: d.setItems.length ? d.setItems.map((x) => x.item).join("|") : "",
   };
-  const workChanged = pane === "chat" && workSig !== "0|0|0" && workSig !== seenSig;
+  const viewing = (id: Tab) => tab === id && (pane === "work" || isLg);
+  const changed = (id: Tab) => sigs[id] !== "" && sigs[id] !== seen[id] && !viewing(id);
+  const openView = (v: View) => {
+    const mark = [...(viewing(tab) ? [tab] : []), ...(v === "chat" ? [] : [v])];
+    setSeen((prev) => ({ ...prev, ...Object.fromEntries(mark.map((id) => [id, sigs[id]])) }));
+    if (v === "chat") setPane("chat");
+    else {
+      setTab(v);
+      setPane("work");
+    }
+  };
 
   const persist = useCallback((id: string, msgs: Msg[], withResearch: boolean) => {
     setRuns((prev) => {
@@ -203,18 +271,26 @@ export default function Builder() {
   /** Moves to the interview with a drafted reply so a gap can be fixed in one step. */
   const draftReply = (text: string) => {
     setInput(text);
-    goPane("chat");
+    openView("chat");
     setTimeout(() => replyRef.current?.focus(), 0);
   };
 
-  const onTabKey = (e: React.KeyboardEvent, ids: Tab[]) => {
-    const i = ids.indexOf(tab);
+  const onTabKey = <T extends string>(e: React.KeyboardEvent, ids: T[], current: T, go: (id: T) => void, prefix: string) => {
+    const i = ids.indexOf(current);
     const next =
-      e.key === "ArrowRight" ? ids[(i + 1) % ids.length] : e.key === "ArrowLeft" ? ids[(i - 1 + ids.length) % ids.length] : null;
+      e.key === "ArrowRight"
+        ? ids[(i + 1) % ids.length]
+        : e.key === "ArrowLeft"
+          ? ids[(i - 1 + ids.length) % ids.length]
+          : e.key === "Home"
+            ? ids[0]
+            : e.key === "End"
+              ? ids[ids.length - 1]
+              : null;
     if (!next) return;
     e.preventDefault();
-    setTab(next);
-    document.getElementById(`tab-${next}`)?.focus();
+    go(next);
+    document.getElementById(`${prefix}-${next}`)?.focus();
   };
 
   const stageIndex = STAGES.findIndex((s) => s.id === d.stage);
@@ -227,6 +303,27 @@ export default function Builder() {
   };
   const errorRaw = netError ?? d.error;
   const tabIds: Tab[] = ["prd", "checks", "set"];
+  const viewIds: View[] = ["chat", ...tabIds];
+  const activeView: View = pane === "chat" ? "chat" : tab;
+  const tabLabel = (id: Tab, short: boolean) =>
+    id === "prd"
+      ? "PRD"
+      : id === "checks"
+        ? d.checks.length
+          ? `Checklist ${counts.pass}/${d.checks.length}`
+          : "Checklist"
+        : `${short ? "Needs input" : "Needs your input"}${d.setItems.length ? ` (${d.setItems.length})` : ""}`;
+  const prdActions =
+    d.prd && tab === "prd" ? (
+      <div className="flex gap-2">
+        <button className="btn" onClick={copyPrd}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <button className="btn" onClick={() => download(d.prd, `PRD-${slug(titleOf(messages))}.md`)}>
+          Download .md
+        </button>
+      </div>
+    ) : null;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -310,29 +407,32 @@ export default function Builder() {
             <span className="xl:hidden"> — </span>
             {stage.hint}
           </p>
-          <div className="flex rounded border border-rule text-xs lg:hidden" role="group" aria-label="View">
-            {(
-              [
-                ["chat", "Interview"],
-                ["work", "PRD"],
-              ] as [Pane, string][]
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                aria-pressed={pane === id}
-                onClick={() => goPane(id)}
-                className={`relative min-h-11 px-4 py-1.5 ${pane === id ? "bg-ink text-paper" : "text-ink-soft"}`}
-              >
-                {label}
-                {id === "work" && workChanged && (
-                  <>
-                    <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-accent" aria-hidden />
-                    <span className="sr-only"> (updated)</span>
-                  </>
-                )}
-              </button>
-            ))}
-          </div>
+        </div>
+      )}
+
+      {started && (
+        <div
+          className="flex overflow-x-auto border-b border-rule px-2 whitespace-nowrap lg:hidden"
+          role="tablist"
+          aria-label="Views"
+        >
+          {viewIds.map((id) => (
+            <button
+              key={id}
+              id={`mtab-${id}`}
+              role="tab"
+              aria-selected={activeView === id}
+              tabIndex={activeView === id ? 0 : -1}
+              onKeyDown={(e) => onTabKey(e, viewIds, activeView, openView, "mtab")}
+              onClick={() => openView(id)}
+              className={`-mb-px min-h-11 shrink-0 border-b-2 px-2 text-sm ${
+                activeView === id ? "border-accent font-semibold" : "border-transparent text-ink-soft"
+              }`}
+            >
+              {id === "chat" ? "Interview" : tabLabel(id, true)}
+              {id !== "chat" && changed(id) && <Dot />}
+            </button>
+          ))}
         </div>
       )}
 
@@ -374,7 +474,7 @@ export default function Builder() {
                   </div>
                 ) : (
                   <div key={i} className="prose-chat">
-                    {text && <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>}
+                    {text && <Md text={text} />}
                     {streaming && last && (
                       <p className="flex items-center gap-2 text-xs text-ink-soft" aria-hidden>
                         <span className="dots" />
@@ -454,52 +554,51 @@ export default function Builder() {
             className={`${pane === "work" ? "flex" : "hidden"} min-h-0 w-full min-w-0 flex-col lg:flex`}
             aria-label="Workspace"
           >
-            <div className="flex flex-wrap items-center gap-x-1 border-b border-rule px-4 sm:px-6" role="tablist">
-              {(
-                [
-                  ["prd", "PRD"],
-                  ["checks", d.checks.length ? `Checklist ${counts.pass}/${d.checks.length}` : "Checklist"],
-                  ["set", `Needs your input${d.setItems.length ? ` (${d.setItems.length})` : ""}`],
-                ] as [Tab, string][]
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  id={`tab-${id}`}
-                  role="tab"
-                  aria-selected={tab === id}
-                  aria-controls="workspace-panel"
-                  tabIndex={tab === id ? 0 : -1}
-                  onKeyDown={(e) => onTabKey(e, tabIds)}
-                  onClick={() => setTab(id)}
-                  className={`-mb-px min-h-11 border-b-2 px-3 text-sm ${
-                    tab === id ? "border-accent font-semibold" : "border-transparent text-ink-soft hover:text-ink"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              {d.prd && tab === "prd" && (
-                <div className="ml-auto flex gap-2 py-1.5">
-                  <button className="btn" onClick={copyPrd}>
-                    {copied ? "Copied" : "Copy"}
+            <div className="hidden items-center gap-x-1 border-b border-rule px-4 sm:px-6 lg:flex">
+              <div className="flex" role="tablist" aria-label="Workspace">
+                {tabIds.map((id) => (
+                  <button
+                    key={id}
+                    id={`tab-${id}`}
+                    role="tab"
+                    aria-selected={tab === id}
+                    aria-controls="workspace-panel"
+                    tabIndex={tab === id ? 0 : -1}
+                    onKeyDown={(e) => onTabKey(e, tabIds, tab, openView, "tab")}
+                    onClick={() => openView(id)}
+                    className={`-mb-px min-h-11 border-b-2 px-3 text-sm ${
+                      tab === id ? "border-accent font-semibold" : "border-transparent text-ink-soft hover:text-ink"
+                    }`}
+                  >
+                    {tabLabel(id, false)}
+                    {changed(id) && <Dot />}
                   </button>
-                  <button className="btn" onClick={() => download(d.prd, `PRD-${slug(titleOf(messages))}.md`)}>
-                    Download .md
-                  </button>
-                </div>
-              )}
+                ))}
+              </div>
+              {prdActions && <div className="ml-auto py-1.5">{prdActions}</div>}
             </div>
+            {prdActions && <div className="flex justify-end border-b border-rule px-4 py-1.5 sm:px-6 lg:hidden">{prdActions}</div>}
 
             <div
               id="workspace-panel"
               className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8"
               role="tabpanel"
-              aria-labelledby={`tab-${tab}`}
+              aria-labelledby={`${isLg ? "tab" : "mtab"}-${tab}`}
             >
               {tab === "prd" &&
                 (d.prd ? (
                   <article className="prose-prd">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{d.prd}</ReactMarkdown>
+                    {/\bSET:|proposed/i.test(d.prd) && (
+                      <p className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule pb-3 font-sans text-xs text-ink-soft">
+                        <span>
+                          <SetChip /> needs your input
+                        </span>
+                        <span>
+                          <span className="chip chip-proposed">proposed</span> a starting value you haven’t confirmed
+                        </span>
+                      </p>
+                    )}
+                    <Md text={d.prd} />
                   </article>
                 ) : (
                   <Empty title="No draft yet">
@@ -511,8 +610,8 @@ export default function Builder() {
                 (d.checks.length ? (
                   <div>
                     <p className="mb-1 max-w-prose text-sm text-ink-soft">
-                      The checklist is what a good PRD for an AI product must cover. Each row is scored once the draft
-                      is assembled.
+                      The checklist is what a good PRD for an AI product must cover. Pass: covered with evidence.
+                      Partial: mentioned but thin. Missing: not covered.
                     </p>
                     <p className="mb-4 text-sm">
                       <span className="text-pass">{counts.pass} pass</span> ·{" "}
@@ -568,8 +667,8 @@ export default function Builder() {
                 (d.setItems.length ? (
                   <div>
                     <p className="mb-4 max-w-prose text-sm text-ink-soft">
-                      Things only you can confirm or supply. They’re marked SET in the draft. Answer one in the chat and
-                      it drops off this list.
+                      Things only you can confirm or supply. They’re marked <SetChip /> in the draft. Answer one in the
+                      chat and it drops off this list.
                     </p>
                     <ul className="grid gap-2">
                       {d.setItems.map((s) => (
@@ -579,7 +678,7 @@ export default function Builder() {
                         >
                           <div className="min-w-0 flex-1">
                             <p className="font-medium">
-                              {s.item}
+                              <SetChip /> {s.item}
                               {s.section && <span className="ml-2 text-xs font-normal text-ink-soft">· {s.section}</span>}
                             </p>
                             {s.why && <p className="mt-0.5 text-ink-soft">{s.why}</p>}

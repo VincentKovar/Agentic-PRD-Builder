@@ -132,3 +132,7 @@ body {
   .btn { min-height: 44px; }
   .link-btn { min-height: 44px; padding: 0 0.5rem; }
 }
+
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 0.65rem; font-weight: 600; line-height: 1; letter-spacing: 0.04em; padding: 0.2em 0.45em; border-radius: 3px; vertical-align: 0.12em; white-space: nowrap; }
+.chip-set { border: 1px dashed var(--partial); color: var(--partial); text-transform: uppercase; }
+.chip-proposed { border: 1px solid var(--rule); color: var(--ink-soft); background: var(--surface); }
