@@ -17,6 +17,7 @@ npm run dev                        # http://localhost:3000
 - `src/lib/prompt.ts` – builds the system prompt and the web-app adapter (tag protocol).
 - `src/app/api/chat/route.ts` – streams the model's reply.
 - `src/lib/tavily.ts` – Tavily search/extract tools. The route runs the model's tool-use loop (caps: 8 searches, 6 page opens per request).
+- `src/lib/sample.ts` – the read-only sample run shown when no API key is set (fictional, adapted from the skill's example PRD).
 - `src/lib/parse.ts` – reads `<stage>`, `<prd>`, `<checks>`, `<set>`, `<choices>` tags out of replies.
 - `src/components/Builder.tsx` – the UI. Runs are saved in browser localStorage.
 - `PRODUCT.md` – Impeccable product context. Design commands: `/impeccable critique`, `audit`, `polish`.

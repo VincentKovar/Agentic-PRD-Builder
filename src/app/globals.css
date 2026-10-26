@@ -39,9 +39,9 @@
   --color-pass: var(--pass);
   --color-partial: var(--partial);
   --color-missing: var(--missing);
-  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-sans: var(--font-ui-sans), system-ui, sans-serif;
   --font-serif: var(--font-newsreader), Georgia, serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 }
 
 h1, h2, h3 { text-wrap: balance; }
@@ -133,6 +133,20 @@ body {
   .link-btn { min-height: 44px; padding: 0 0.5rem; }
 }
 
-.chip { display: inline-block; font-family: var(--font-mono); font-size: 0.65rem; font-weight: 600; line-height: 1; letter-spacing: 0.04em; padding: 0.2em 0.45em; border-radius: 3px; vertical-align: 0.12em; white-space: nowrap; }
+.chip { display: inline-block; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; line-height: 1; letter-spacing: 0.04em; padding: 0.2em 0.45em; border-radius: 3px; vertical-align: 0.12em; white-space: nowrap; }
 .chip-set { border: 1px dashed var(--partial); color: var(--partial); text-transform: uppercase; }
 .chip-proposed { border: 1px solid var(--rule); color: var(--ink-soft); background: var(--surface); }
+
+/* The PRD as a sheet of paper: a page on the desk, with a hint of the stack beneath it. */
+.sheet {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 1.5rem 1.25rem 2rem;
+  box-shadow: 0 1px 0 var(--rule), 0 5px 0 -2px var(--surface), 0 6px 0 -2px var(--rule);
+  max-width: 46rem;
+  margin: 0 auto 1.5rem;
+}
+@media (min-width: 640px) { .sheet { padding: 2.5rem 3rem 3rem; } }
+
+.label { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; }

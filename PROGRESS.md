@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: 2026-10-26
+Last updated: 2026-10-26 (later)
 
 ## Done
 
@@ -11,6 +11,10 @@ Last updated: 2026-10-26
 - **UI:** start screen, interview chat, PRD / Checklist / SET tabs, copy and download `.md`, runs saved in browser localStorage, mobile Interview/PRD toggle.
 - **Web research (Tavily):** `web_search` and `web_extract` tools in `src/lib/tavily.ts`; caps of 8 searches and 6 page opens per request; toggle on the start screen, enabled when `TAVILY_API_KEY` is set.
 - **Impeccable:** installed per project (`npx impeccable install --project --providers=claude --no-hooks`), telemetry off, `PRODUCT.md` written by hand following its init flow. The UI was checked with `impeccable detect` and is clean.
+
+- **Design pass:** audience set to AI builders, with the app also serving as a portfolio piece (`PRODUCT.md`). Type is Schibsted Grotesk, IBM Plex Mono and Newsreader. The PRD renders as a paper sheet. A summary strip shows Draft/Almost/Ready, with "Fix next gap" as the one primary action at Finish.
+- **Sample run:** a read-only, labelled sample run (`src/lib/sample.ts`) is available from the start screen, so visitors without a key can see the whole flow.
+- **Critique trend:** 22 -> 25 -> 26 / 40 (`.impeccable/critique/`).
 
 ## Verified
 

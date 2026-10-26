@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { friendlyError } from "@/lib/errors";
 import { STAGES, derive, extract, stripTags, type Msg } from "@/lib/parse";
 import type { ChecklistRow } from "@/lib/checklist";
+import { SAMPLE_MESSAGES } from "@/lib/sample";
 
 type Run = { id: string; title: string; messages: Msg[]; updatedAt: number; research?: boolean };
 type Tab = "prd" | "checks" | "set";
@@ -75,6 +76,26 @@ function Dot() {
   );
 }
 
+/** Four dots for the four phases: filled = confirmed, ringed = current. */
+function PhaseDots({ phase, finished }: { phase: number; finished: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1" aria-hidden>
+      {Array.from({ length: PHASES }, (_, i) => {
+        const n = i + 1;
+        const done = finished || n < phase;
+        return (
+          <span
+            key={n}
+            className={`h-2 w-2 rounded-full border ${
+              done ? "border-accent bg-accent" : n === phase ? "border-accent ring-2 ring-accent/30" : "border-rule"
+            }`}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
 function loadRuns(): Run[] {
   try {
     const raw = localStorage.getItem(STORE);
@@ -113,6 +134,7 @@ export default function Builder() {
   const [copied, setCopied] = useState(false);
   const [features, setFeatures] = useState<Features | null>(null);
   const [research, setResearch] = useState(false);
+  const [sample, setSample] = useState(false);
   const [rowInfo, setRowInfo] = useState<Record<string, ChecklistRow>>({});
   const abortRef = useRef<AbortController | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
@@ -179,7 +201,7 @@ export default function Builder() {
   const send = useCallback(
     async (text: string, base: Msg[] = messages) => {
       const content = text.trim();
-      if (!content || streaming) return;
+      if (!content || streaming || sample) return;
       const id = runId ?? crypto.randomUUID();
       if (!runId) setRunId(id);
 
@@ -221,10 +243,11 @@ export default function Builder() {
         persist(id, final, research);
       }
     },
-    [messages, streaming, runId, research, persist],
+    [messages, streaming, sample, runId, research, persist],
   );
 
   const openRun = (r: Run) => {
+    setSample(false);
     setRunId(r.id);
     setMessages(r.messages);
     if (r.research !== undefined) setResearch(r.research && (features?.research ?? false));
@@ -235,6 +258,7 @@ export default function Builder() {
 
   const newRun = () => {
     abortRef.current?.abort();
+    setSample(false);
     setRunId(null);
     setMessages([]);
     setInput("");
@@ -242,6 +266,18 @@ export default function Builder() {
     setNetError(null);
     setPane("chat");
     setResearch(features?.research ?? false);
+  };
+
+  const openSample = () => {
+    setSample(true);
+    setRunId(null);
+    setMessages(SAMPLE_MESSAGES);
+    setResearch(false);
+    setNetError(null);
+    setInput("");
+    setShowRuns(false);
+    setTab("prd");
+    setPane("work");
   };
 
   const deleteRun = (r: Run) => {
@@ -313,8 +349,20 @@ export default function Builder() {
           ? `Checklist ${counts.pass}/${d.checks.length}`
           : "Checklist"
         : `${short ? "Needs input" : "Needs your input"}${d.setItems.length ? ` (${d.setItems.length})` : ""}`;
+  const finished = d.stage === "deliver";
+  const phasesDone = d.stage === "qa" || finished ? PHASES : Math.max(0, stage.phase - 1);
+  const gaps = counts.missing + counts.partial;
+  const open = d.setItems.length;
+  const nextGap = d.checks.find((c) => c.result === "missing") ?? d.checks.find((c) => c.result === "partial");
+  const canFix = !sample && (nextGap !== undefined || d.setItems.length > 0);
+  const fixNext = () => {
+    if (nextGap) {
+      const t = rowInfo[nextGap.id]?.title ?? nextGap.id;
+      draftReply(`Checklist ${nextGap.id} (${t}) is ${nextGap.result}${nextGap.note ? `: ${nextGap.note}` : ""}. Let's fix it.`);
+    } else if (d.setItems[0]) draftReply(`About "${d.setItems[0].item}": `);
+  };
   const prdActions =
-    d.prd && tab === "prd" ? (
+    d.prd && tab === "prd" && !finished ? (
       <div className="flex gap-2">
         <button className="btn" onClick={copyPrd}>
           {copied ? "Copied" : "Copy"}
@@ -332,22 +380,23 @@ export default function Builder() {
         {started && (
           <ol className="hidden flex-1 items-center gap-1 xl:flex" aria-label="Progress">
             {STAGES.map((s, i) => {
-              const current = i === stageIndex;
-              const done = i < stageIndex;
+              const at = i === stageIndex;
+              const current = at && s.id !== "deliver";
+              const done = i < stageIndex || (at && s.id === "deliver");
               return (
                 <li
                   key={s.id}
-                  aria-current={current ? "step" : undefined}
+                  aria-current={at ? "step" : undefined}
                   title={s.hint}
                   className={`flex items-center gap-1.5 text-xs ${
-                    current ? "font-semibold text-ink" : s.phase > 0 ? "text-ink-soft" : "text-ink-soft/80"
+                    at ? "font-semibold text-ink" : s.phase > 0 ? "text-ink-soft" : "text-ink-soft/80"
                   }`}
                 >
                   <span
                     aria-hidden
                     className={`inline-flex items-center justify-center rounded-full border text-[10px] ${
                       s.phase > 0 ? "h-5 w-5" : "h-3 w-3"
-                    } ${current ? "border-accent bg-accent text-accent-ink" : done ? "border-ink-soft bg-ink-soft text-paper" : "border-rule"}`}
+                    } ${current ? "border-accent text-accent ring-2 ring-accent/30" : done ? "border-accent bg-accent text-accent-ink" : "border-rule"}`}
                   >
                     {s.phase > 0 ? (done ? "✓" : s.phase) : ""}
                   </span>
@@ -363,16 +412,16 @@ export default function Builder() {
           <button className="btn" onClick={() => setShowRuns((v) => !v)} aria-expanded={showRuns}>
             Runs{runs.length ? ` (${runs.length})` : ""}
           </button>
-          {started && (
-            <button className="btn" onClick={newRun}>
-              New PRD
-            </button>
-          )}
         </div>
       </header>
 
       {showRuns && (
         <div className="max-h-56 overflow-y-auto border-b border-rule bg-surface px-4 py-3 sm:px-6">
+          {started && (
+            <button className="btn mb-2" onClick={newRun}>
+              New PRD
+            </button>
+          )}
           {runs.length === 0 ? (
             <p className="text-sm text-ink-soft">No saved runs yet. They save automatically in this browser.</p>
           ) : (
@@ -397,15 +446,30 @@ export default function Builder() {
         </div>
       )}
 
+      {sample && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule bg-surface px-4 py-2 text-sm sm:px-6" role="note">
+          <p className="min-w-0 flex-1">
+            <span className="label mr-2 text-partial">Sample</span>
+            Fictional content adapted from the skill’s example PRD. Read-only, not real usage.
+          </p>
+          <button className="link-btn text-accent underline" onClick={newRun}>
+            Start your own
+          </button>
+        </div>
+      )}
+
       {started && (
         <div className="flex items-center gap-3 border-b border-rule px-4 py-2 sm:px-6">
-          <p className="min-w-0 flex-1 text-xs text-ink-soft">
-            <span className="font-semibold text-ink xl:hidden">
-              {stage.phase > 0 ? `Phase ${stage.phase} of ${PHASES} · ` : ""}
+          <span className="xl:hidden">
+            <PhaseDots phase={stage.phase} finished={d.stage === "qa" || d.stage === "deliver"} />
+          </span>
+          <p className="min-w-0 flex-1 truncate text-xs text-ink-soft" title={stage.hint}>
+            <span className="label font-semibold text-ink xl:hidden">
+              {stage.phase > 0 ? `Phase ${stage.phase}/${PHASES} · ` : ""}
               {stage.label}
             </span>
-            <span className="xl:hidden"> — </span>
-            {stage.hint}
+            <span className="xl:hidden"> </span>
+            <span className="hidden sm:inline">{stage.hint}</span>
           </p>
         </div>
       )}
@@ -443,6 +507,7 @@ export default function Builder() {
           features={features}
           research={research}
           onResearch={setResearch}
+          onSample={openSample}
           onStart={() =>
             send(
               `${input.trim()}\n\n(Research: ${research ? "on" : "off. I'll paste any evidence myself; mark the rest SET."})`,
@@ -502,6 +567,15 @@ export default function Builder() {
             </div>
 
             <div className="border-t border-rule bg-surface px-4 py-3 sm:px-6">
+              {sample ? (
+                <p className="text-sm text-ink-soft">
+                  This is a read-only sample, so replies are off.{" "}
+                  <button className="link-btn text-accent underline" onClick={newRun}>
+                    Start your own
+                  </button>
+                </p>
+              ) : (
+                <>
               {d.choices.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">
                   {d.choices.map((c, i) => (
@@ -547,6 +621,8 @@ export default function Builder() {
               <p className="mt-1.5 text-xs text-ink-soft">
                 Enter to send · Shift+Enter for a new line{research ? " · Research on" : ""}
               </p>
+                </>
+              )}
             </div>
           </section>
 
@@ -579,6 +655,64 @@ export default function Builder() {
             </div>
             {prdActions && <div className="flex justify-end border-b border-rule px-4 py-1.5 sm:px-6 lg:hidden">{prdActions}</div>}
 
+            {(d.prd || d.checks.length > 0) && (
+              <div
+                className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-rule px-4 py-2.5 text-sm sm:px-6 ${finished ? "bg-surface" : ""}`}
+                role="status"
+              >
+                <p className="min-w-0 flex-1">
+                  {finished ? (
+                    gaps + open === 0 ? (
+                      <>
+                        <span className="label mr-2 text-pass">Ready</span>
+                        Checked, with no open gaps. Hand it to your coding agent.
+                      </>
+                    ) : (
+                      <>
+                        <span className="label mr-2 text-partial">Almost</span>
+                        {gaps > 0 && `${gaps} checklist ${gaps === 1 ? "row" : "rows"}`}
+                        {gaps > 0 && open > 0 && " and "}
+                        {open > 0 && `${open} open ${open === 1 ? "item" : "items"}`} to close before it’s ready.
+                      </>
+                    )
+                  ) : (
+                    <span className="text-ink-soft">
+                      <span className="label mr-2 text-ink">Draft</span>
+                      {phasesDone} of {PHASES} phases confirmed
+                      {d.checks.length > 0 && ` · ${counts.pass}/${d.checks.length} checks pass`}
+                      {open > 0 && ` · ${open} need your input`}
+                    </span>
+                  )}
+                </p>
+                {finished && d.prd && (
+                  <div className="flex gap-2">
+                    {canFix && gaps + open > 0 ? (
+                      <>
+                        <button className="btn btn-primary" onClick={fixNext}>
+                          Fix next gap
+                        </button>
+                        <button className="btn" onClick={() => download(d.prd, `PRD-${slug(titleOf(messages))}.md`)}>
+                          Download .md
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => download(d.prd, `PRD-${slug(titleOf(messages))}.md`)}
+                        >
+                          Download .md
+                        </button>
+                        <button className="btn" onClick={copyPrd}>
+                          {copied ? "Copied" : "Copy"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div
               id="workspace-panel"
               className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-8"
@@ -587,7 +721,7 @@ export default function Builder() {
             >
               {tab === "prd" &&
                 (d.prd ? (
-                  <article className="prose-prd">
+                  <article className="prose-prd sheet">
                     {/\bSET:|proposed/i.test(d.prd) && (
                       <p className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule pb-3 font-sans text-xs text-ink-soft">
                         <span>
@@ -640,7 +774,7 @@ export default function Builder() {
                                 </span>
                                 <span className="min-w-0 flex-1 text-ink-soft">{c.note}</span>
                               </p>
-                              {c.result !== "pass" && (
+                              {c.result !== "pass" && !sample && (
                                 <button
                                   className="link-btn mt-1 text-accent underline"
                                   onClick={() =>
@@ -683,12 +817,14 @@ export default function Builder() {
                             </p>
                             {s.why && <p className="mt-0.5 text-ink-soft">{s.why}</p>}
                           </div>
-                          <button
-                            className="link-btn shrink-0 text-accent underline"
-                            onClick={() => draftReply(`About "${s.item}": `)}
-                          >
-                            Answer
-                          </button>
+                          {!sample && (
+                            <button
+                              className="link-btn shrink-0 text-accent underline"
+                              onClick={() => draftReply(`About "${s.item}": `)}
+                            >
+                              Answer
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -710,6 +846,7 @@ function Start({
   value,
   onChange,
   onStart,
+  onSample,
   features,
   research,
   onResearch,
@@ -717,6 +854,7 @@ function Start({
   value: string;
   onChange: (v: string) => void;
   onStart: () => void;
+  onSample: () => void;
   features: Features | null;
   research: boolean;
   onResearch: (v: boolean) => void;
@@ -755,8 +893,11 @@ function Start({
 
       {features && !features.anthropic && (
         <p role="status" className="mt-6 rounded border border-partial p-3 text-sm">
-          <span className="font-semibold">Not connected to Claude yet.</span> Whoever runs this app needs to add an API
-          key (see the README) before an interview can start.
+          <span className="font-semibold">No API key on this copy of the app,</span> so a live interview can’t start.
+          You can still explore a finished sample run.{" "}
+          <button className="link-btn text-accent underline" onClick={onSample}>
+            Open the sample
+          </button>
         </p>
       )}
 
@@ -797,13 +938,16 @@ function Start({
         </span>
       </label>
 
-      <div className="mt-6 mb-auto">
+      <div className="mt-6 mb-auto flex flex-wrap items-center gap-3">
         <button
-          className="btn btn-primary whitespace-nowrap"
+          className={`btn whitespace-nowrap ${features?.anthropic === false ? "" : "btn-primary"}`}
           disabled={value.trim().length < 10 || features?.anthropic === false}
           onClick={onStart}
         >
           Start interview
+        </button>
+        <button className={`btn whitespace-nowrap ${features?.anthropic === false ? "btn-primary" : ""}`} onClick={onSample}>
+          View a sample run
         </button>
       </div>
     </main>

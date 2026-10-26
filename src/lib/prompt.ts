@@ -26,7 +26,7 @@ The app reads these tags from your replies, hides them from the chat, and render
 - <prd>...</prd> the COMPLETE current PRD.md draft in Markdown. Include it whenever you create or change the draft (after each confirmed section, after fixes), never a partial. Omit it when the draft did not change.
 - <checks>[{"id":"C01","result":"pass|partial|missing","note":"where covered or what to add"}]</checks> one object per active checklist row, valid JSON. Include it at QA and whenever results change. Omit before QA.
 - <set>[{"item":"Data retention policy","why":"Checklist C23 needs it and only you know it","section":"Develop"}]</set> the COMPLETE current list of SET items (things only the user can confirm or supply), valid JSON array. Each object has "item" (plain words, no "SET:" prefix), "why" (one short sentence on why it matters), and "section" (Discover, Design, Develop or Deploy). Include it whenever the list changes. Plain strings are also accepted.
-- <choices>["Confirm", "Edit", "Answer more"]</choices> two to four short reply options the user can click, valid JSON array of strings, for the checkpoint or question you just asked. The user can always type something else.
+- <choices>["Confirm", "Edit", "Answer more"]</choices> two to four short reply options the user can click, valid JSON array of strings, for the checkpoint or question you just asked. The user can always type something else. Never offer Download, Copy or Save as choices: the app provides them at the Finish step.
 
 Keep your prose short: the preview panel already shows the PRD, so do not repeat the whole PRD in prose. At section checkpoints, show only that section's draft text in prose, then ask.
 `;
