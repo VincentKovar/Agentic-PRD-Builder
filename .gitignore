@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+!.env.local.example
+
+# impeccable (reinstall: npx impeccable install --project --providers=claude --no-hooks)
+.claude/skills/
+.claude/agents/
+.impeccable/config.local.json

@@ -1,36 +1,26 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PRD Builder (web)
 
-## Getting Started
+A front end for the [`ai-prd-builder`](https://github.com/VincentKovar/ai-prd-builder) skill. The skill's files are the system prompt; the Claude API runs the interview.
 
-First, run the development server:
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.local.example .env.local   # then add ANTHROPIC_API_KEY (and TAVILY_API_KEY for web research)
+npm install
+npm run dev                        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Layout
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `skill/` – copy of the skill (SKILL.md, config.md, references/). Re-copy to update.
+- `data/checklist.md` – the living checklist, re-read on every request. Edit by hand; never delete rows, retire them.
+- `src/lib/prompt.ts` – builds the system prompt and the web-app adapter (tag protocol).
+- `src/app/api/chat/route.ts` – streams the model's reply.
+- `src/lib/tavily.ts` – Tavily search/extract tools. The route runs the model's tool-use loop (caps: 8 searches, 6 page opens per request).
+- `src/lib/parse.ts` – reads `<stage>`, `<prd>`, `<checks>`, `<set>`, `<choices>` tags out of replies.
+- `src/components/Builder.tsx` – the UI. Runs are saved in browser localStorage.
+- `PRODUCT.md` – Impeccable product context. Design commands: `/impeccable critique`, `audit`, `polish`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Not built yet
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Research needs `TAVILY_API_KEY`; without it the toggle is disabled and gaps are marked SET. Approved checklist rows are not written back to `data/checklist.md`. Runs are per-browser only.
